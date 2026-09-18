@@ -1,20 +1,24 @@
 from flask import Flask, render_template, request, redirect, url_for, session, flash, send_file
 import sqlite3
-import os
 from datetime import datetime
 from werkzeug.security import generate_password_hash, check_password_hash
 import pandas as pd
 import io
 
 app = Flask(__name__)
+
+# ============================================================
+# FLASK SECRET KEY
+# ============================================================
+
 app.secret_key = "change-this-secret-key"
-
-DATABASE = "my_expenses.db"
-
 
 # ============================================================
 # DATABASE
 # ============================================================
+
+DATABASE = "my_expenses.db"
+
 
 def get_db():
     conn = sqlite3.connect(DATABASE)
@@ -26,6 +30,7 @@ def create_db():
     conn = get_db()
     cursor = conn.cursor()
 
+    # Users
     cursor.execute("""
         CREATE TABLE IF NOT EXISTS users (
             username TEXT PRIMARY KEY,
@@ -33,6 +38,7 @@ def create_db():
         )
     """)
 
+    # Salary
     cursor.execute("""
         CREATE TABLE IF NOT EXISTS salary (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -41,6 +47,7 @@ def create_db():
         )
     """)
 
+    # Budget
     cursor.execute("""
         CREATE TABLE IF NOT EXISTS budget (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -49,6 +56,7 @@ def create_db():
         )
     """)
 
+    # Transactions
     cursor.execute("""
         CREATE TABLE IF NOT EXISTS transactions (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -63,25 +71,44 @@ def create_db():
         )
     """)
 
-    # Demo/admin account
+    # ========================================================
+    # DEMO ADMIN ACCOUNT
+    # ========================================================
+
     cursor.execute(
         "SELECT username FROM users WHERE username=?",
         ("admin",)
     )
 
     if cursor.fetchone() is None:
+
         cursor.execute(
-            "INSERT INTO users (username, password) VALUES (?, ?)",
-            ("admin", generate_password_hash("admin123"))
+            """
+            INSERT INTO users
+            (username, password)
+            VALUES (?, ?)
+            """,
+            (
+                "admin",
+                generate_password_hash("admin123")
+            )
         )
 
         cursor.execute(
-            "INSERT INTO salary (monthly_salary, username) VALUES (?, ?)",
+            """
+            INSERT INTO salary
+            (monthly_salary, username)
+            VALUES (?, ?)
+            """,
             (30000, "admin")
         )
 
         cursor.execute(
-            "INSERT INTO budget (monthly_budget, username) VALUES (?, ?)",
+            """
+            INSERT INTO budget
+            (monthly_budget, username)
+            VALUES (?, ?)
+            """,
             (10000, "admin")
         )
 
@@ -90,7 +117,7 @@ def create_db():
 
 
 # ============================================================
-# LOGIN REQUIRED
+# LOGIN CHECK
 # ============================================================
 
 def logged_in():
@@ -98,7 +125,7 @@ def logged_in():
 
 
 # ============================================================
-# WELCOME
+# WELCOME PAGE
 # ============================================================
 
 @app.route("/")
@@ -115,31 +142,63 @@ def login():
 
     if request.method == "POST":
 
-        username = request.form["username"].strip()
-        password = request.form["password"]
+        username = request.form.get(
+            "username",
+            ""
+        ).strip()
+
+        password = request.form.get(
+            "password",
+            ""
+        )
+
+        if not username or not password:
+
+            flash(
+                "Username and password are required.",
+                "danger"
+            )
+
+            return render_template("login.html")
 
         conn = get_db()
 
         user = conn.execute(
-            "SELECT * FROM users WHERE username=?",
+            """
+            SELECT *
+            FROM users
+            WHERE username=?
+            """,
             (username,)
         ).fetchone()
 
         conn.close()
 
-        if user and check_password_hash(
-            user["password"],
-            password
-        ):
+        if user:
 
-            session["username"] = username
+            try:
 
-            flash(
-                f"Welcome, {username}!",
-                "success"
-            )
+                password_correct = check_password_hash(
+                    user["password"],
+                    password
+                )
 
-            return redirect(url_for("dashboard"))
+            except Exception:
+
+                password_correct = False
+
+            if password_correct:
+
+                session["username"] = username
+
+                flash(
+                    f"Welcome, {username}!",
+                    "success"
+                )
+
+                return redirect(
+                    url_for("dashboard")
+                )
 
         flash(
             "Incorrect username or password.",
@@ -158,8 +217,15 @@ def register():
 
     if request.method == "POST":
 
-        username = request.form["username"].strip()
-        password = request.form["password"]
+        username = request.form.get(
+            "username",
+            ""
+        ).strip()
+
+        password = request.form.get(
+            "password",
+            ""
+        )
 
         if not username or not password:
 
@@ -168,12 +234,15 @@ def register():
                 "danger"
             )
 
-            return redirect(url_for("register"))
+            return redirect(
+                url_for("register")
+            )
 
         conn = get_db()
 
         try:
 
+            # Create user
             conn.execute(
                 """
                 INSERT INTO users
@@ -186,6 +255,7 @@ def register():
                 )
             )
 
+            # New user starts with salary 0
             conn.execute(
                 """
                 INSERT INTO salary
@@ -195,6 +265,7 @@ def register():
                 (0, username)
             )
 
+            # Default expense budget
             conn.execute(
                 """
                 INSERT INTO budget
@@ -211,7 +282,9 @@ def register():
                 "success"
             )
 
-            return redirect(url_for("login"))
+            return redirect(
+                url_for("login")
+            )
 
         except sqlite3.IntegrityError:
 
@@ -221,6 +294,7 @@ def register():
             )
 
         finally:
+
             conn.close()
 
     return render_template("register.html")
@@ -234,12 +308,16 @@ def register():
 def dashboard():
 
     if not logged_in():
-        return redirect(url_for("login"))
+
+        return redirect(
+            url_for("login")
+        )
 
     username = session["username"]
 
     conn = get_db()
 
+    # Get salary
     salary_row = conn.execute(
         """
         SELECT monthly_salary
@@ -249,6 +327,7 @@ def dashboard():
         (username,)
     ).fetchone()
 
+    # Get budget
     budget_row = conn.execute(
         """
         SELECT monthly_budget
@@ -258,6 +337,7 @@ def dashboard():
         (username,)
     ).fetchone()
 
+    # Get transactions
     transactions = conn.execute(
         """
         SELECT *
@@ -268,9 +348,13 @@ def dashboard():
         (username,)
     ).fetchall()
 
+    # Total income
     income_row = conn.execute(
         """
-        SELECT COALESCE(SUM(total_after_gst), 0)
+        SELECT COALESCE(
+            SUM(total_after_gst),
+            0
+        )
         FROM transactions
         WHERE username=?
         AND transaction_type='Income'
@@ -278,9 +362,13 @@ def dashboard():
         (username,)
     ).fetchone()
 
+    # Total expenses
     expense_row = conn.execute(
         """
-        SELECT COALESCE(SUM(total_after_gst), 0)
+        SELECT COALESCE(
+            SUM(total_after_gst),
+            0
+        )
         FROM transactions
         WHERE username=?
         AND transaction_type='Expense'
@@ -290,17 +378,50 @@ def dashboard():
 
     conn.close()
 
-    salary = salary_row["monthly_salary"] if salary_row else 0
-    budget = budget_row["monthly_budget"] if budget_row else 0
+    salary = (
+        salary_row["monthly_salary"]
+        if salary_row
+        else 0
+    )
+
+    budget = (
+        budget_row["monthly_budget"]
+        if budget_row
+        else 0
+    )
 
     income = income_row[0]
     expenses = expense_row[0]
 
-    # Account balance
-    balance = salary + income - expenses
+    # ========================================================
+    # ACCOUNT BALANCE
+    #
+    # Example:
+    #
+    # Salary = ₹30,000
+    # Expenses = ₹11,000
+    #
+    # Account Balance = ₹19,000
+    # ========================================================
+
+    balance = (
+        salary
+        + income
+        - expenses
+    )
+
+    # ========================================================
+    # BUDGET CHECK
+    #
+    # Budget = ₹10,000
+    # Expenses = ₹11,000
+    #
+    # Budget exceeded = True
+    # ========================================================
 
     budget_exceeded = (
-        budget > 0 and expenses > budget
+        budget > 0
+        and expenses > budget
     )
 
     return render_template(
@@ -320,55 +441,108 @@ def dashboard():
 # UPDATE SALARY AND BUDGET
 # ============================================================
 
-@app.route("/update-financial", methods=["POST"])
+@app.route(
+    "/update-financial",
+    methods=["POST"]
+)
 def update_financial():
 
     if not logged_in():
-        return redirect(url_for("login"))
+
+        return redirect(
+            url_for("login")
+        )
 
     username = session["username"]
 
     try:
 
         salary = float(
-            request.form["salary"]
+            request.form.get(
+                "salary",
+                "0"
+            )
         )
 
         budget = float(
-            request.form["budget"]
+            request.form.get(
+                "budget",
+                "0"
+            )
         )
 
         if salary < 0 or budget < 0:
+
             raise ValueError
 
-    except ValueError:
+    except (ValueError, TypeError):
 
         flash(
             "Please enter valid salary and budget values.",
             "danger"
         )
 
-        return redirect(url_for("dashboard"))
+        return redirect(
+            url_for("dashboard")
+        )
 
     conn = get_db()
 
-    conn.execute(
+    # Update salary
+    cursor = conn.execute(
         """
         UPDATE salary
         SET monthly_salary=?
         WHERE username=?
         """,
-        (salary, username)
+        (
+            salary,
+            username
+        )
     )
 
-    conn.execute(
+    # Create salary row if it doesn't exist
+    if cursor.rowcount == 0:
+
+        conn.execute(
+            """
+            INSERT INTO salary
+            (monthly_salary, username)
+            VALUES (?, ?)
+            """,
+            (
+                salary,
+                username
+            )
+        )
+
+    # Update budget
+    cursor = conn.execute(
         """
         UPDATE budget
         SET monthly_budget=?
         WHERE username=?
         """,
-        (budget, username)
+        (
+            budget,
+            username
+        )
     )
+
+    # Create budget row if it doesn't exist
+    if cursor.rowcount == 0:
+
+        conn.execute(
+            """
+            INSERT INTO budget
+            (monthly_budget, username)
+            VALUES (?, ?)
+            """,
+            (
+                budget,
+                username
+            )
+        )
 
     conn.commit()
     conn.close()
@@ -378,28 +552,60 @@ def update_financial():
         "success"
     )
 
-    return redirect(url_for("dashboard"))
+    return redirect(
+        url_for("dashboard")
+    )
 
 
 # ============================================================
 # ADD TRANSACTION
 # ============================================================
 
-@app.route("/add-transaction", methods=["POST"])
+@app.route(
+    "/add-transaction",
+    methods=["POST"]
+)
 def add_transaction():
 
     if not logged_in():
-        return redirect(url_for("login"))
+
+        return redirect(
+            url_for("login")
+        )
 
     username = session["username"]
 
-    description = request.form["description"].strip()
-    amount = request.form["amount"].strip()
-    gst = request.form["gst"].strip()
-    transaction_type = request.form["transaction_type"].strip()
-    category = request.form["category"].strip()
-    date = request.form["date"].strip()
+    description = request.form.get(
+        "description",
+        ""
+    ).strip()
 
+    amount = request.form.get(
+        "amount",
+        ""
+    ).strip()
+
+    gst = request.form.get(
+        "gst",
+        ""
+    ).strip()
+
+    transaction_type = request.form.get(
+        "transaction_type",
+        ""
+    ).strip()
+
+    category = request.form.get(
+        "category",
+        ""
+    ).strip()
+
+    date = request.form.get(
+        "date",
+        ""
+    ).strip()
+
+    # Check required fields
     if not all([
         description,
         amount,
@@ -413,26 +619,35 @@ def add_transaction():
             "danger"
         )
 
-        return redirect(url_for("dashboard"))
+        return redirect(
+            url_for("dashboard")
+        )
 
     try:
 
         amount_value = float(amount)
 
         if amount_value <= 0:
+
             raise ValueError
 
-        if transaction_type == "Expense" and gst:
+        # GST only applies to expenses
+        if (
+            transaction_type == "Expense"
+            and gst
+        ):
 
             gst_value = float(gst)
 
             if gst_value < 0:
+
                 raise ValueError
 
         else:
 
             gst_value = 0
 
+        # Validate date
         datetime.strptime(
             date,
             "%Y-%m-%d"
@@ -445,18 +660,26 @@ def add_transaction():
             "danger"
         )
 
-        return redirect(url_for("dashboard"))
+        return redirect(
+            url_for("dashboard")
+        )
 
+    # Calculate GST amount
     gst_amount = (
-        amount_value * gst_value / 100
+        amount_value
+        * gst_value
+        / 100
     )
 
+    # Calculate total
     total = (
-        amount_value + gst_amount
+        amount_value
+        + gst_amount
     )
 
     conn = get_db()
 
+    # Add transaction
     conn.execute(
         """
         INSERT INTO transactions
@@ -486,10 +709,16 @@ def add_transaction():
 
     conn.commit()
 
-    # Check budget after expense
+    # ========================================================
+    # CHECK TOTAL EXPENSES
+    # ========================================================
+
     expense_row = conn.execute(
         """
-        SELECT COALESCE(SUM(total_after_gst), 0)
+        SELECT COALESCE(
+            SUM(total_after_gst),
+            0
+        )
         FROM transactions
         WHERE username=?
         AND transaction_type='Expense'
@@ -506,17 +735,24 @@ def add_transaction():
         (username,)
     ).fetchone()
 
+    total_expenses = expense_row[0]
+
     conn.close()
+
+    # ========================================================
+    # SHOW BUDGET WARNING
+    # ========================================================
 
     if (
         transaction_type == "Expense"
         and budget_row
-        and expense_row[0] > budget_row["monthly_budget"]
+        and total_expenses
+        > budget_row["monthly_budget"]
     ):
 
         flash(
             f"Budget Exceeded! Your expenses are "
-            f"₹{expense_row[0]:.2f}, while your budget is "
+            f"₹{total_expenses:.2f}, while your budget is "
             f"₹{budget_row['monthly_budget']:.2f}.",
             "danger"
         )
@@ -528,18 +764,26 @@ def add_transaction():
             "success"
         )
 
-    return redirect(url_for("dashboard"))
+    return redirect(
+        url_for("dashboard")
+    )
 
 
 # ============================================================
 # DELETE TRANSACTION
 # ============================================================
 
-@app.route("/delete/<int:transaction_id>", methods=["POST"])
+@app.route(
+    "/delete/<int:transaction_id>",
+    methods=["POST"]
+)
 def delete_transaction(transaction_id):
 
     if not logged_in():
-        return redirect(url_for("login"))
+
+        return redirect(
+            url_for("login")
+        )
 
     username = session["username"]
 
@@ -565,7 +809,9 @@ def delete_transaction(transaction_id):
         "success"
     )
 
-    return redirect(url_for("dashboard"))
+    return redirect(
+        url_for("dashboard")
+    )
 
 
 # ============================================================
@@ -576,7 +822,10 @@ def delete_transaction(transaction_id):
 def filter_transactions():
 
     if not logged_in():
-        return redirect(url_for("login"))
+
+        return redirect(
+            url_for("login")
+        )
 
     username = session["username"]
 
@@ -609,7 +858,9 @@ def filter_transactions():
             "danger"
         )
 
-        return redirect(url_for("dashboard"))
+        return redirect(
+            url_for("dashboard")
+        )
 
     conn = get_db()
 
@@ -630,25 +881,33 @@ def filter_transactions():
 
     conn.close()
 
+    salary = get_salary(username)
+    budget = get_budget(username)
+    income = get_income(username)
+    expenses = get_expenses(username)
+    balance = get_balance(username)
+
+    budget_exceeded = (
+        budget > 0
+        and expenses > budget
+    )
+
     return render_template(
         "dashboard.html",
         username=username,
-        salary=get_salary(username),
-        budget=get_budget(username),
-        income=get_income(username),
-        expenses=get_expenses(username),
-        balance=get_balance(username),
+        salary=salary,
+        budget=budget,
+        income=income,
+        expenses=expenses,
+        balance=balance,
         transactions=transactions,
-        budget_exceeded=(
-            get_expenses(username)
-            > get_budget(username)
-        ),
+        budget_exceeded=budget_exceeded,
         filtered=True
     )
 
 
 # ============================================================
-# HELPER FUNCTIONS
+# GET SALARY
 # ============================================================
 
 def get_salary(username):
@@ -666,8 +925,16 @@ def get_salary(username):
 
     conn.close()
 
-    return row["monthly_salary"] if row else 0
+    return (
+        row["monthly_salary"]
+        if row
+        else 0
+    )
 
+
+# ============================================================
+# GET BUDGET
+# ============================================================
 
 def get_budget(username):
 
@@ -684,8 +951,16 @@ def get_budget(username):
 
     conn.close()
 
-    return row["monthly_budget"] if row else 0
+    return (
+        row["monthly_budget"]
+        if row
+        else 0
+    )
 
+
+# ============================================================
+# GET INCOME
+# ============================================================
 
 def get_income(username):
 
@@ -693,7 +968,10 @@ def get_income(username):
 
     row = conn.execute(
         """
-        SELECT COALESCE(SUM(total_after_gst), 0)
+        SELECT COALESCE(
+            SUM(total_after_gst),
+            0
+        )
         FROM transactions
         WHERE username=?
         AND transaction_type='Income'
@@ -706,13 +984,20 @@ def get_income(username):
     return row[0]
 
 
+# ============================================================
+# GET EXPENSES
+# ============================================================
+
 def get_expenses(username):
 
     conn = get_db()
 
     row = conn.execute(
         """
-        SELECT COALESCE(SUM(total_after_gst), 0)
+        SELECT COALESCE(
+            SUM(total_after_gst),
+            0
+        )
         FROM transactions
         WHERE username=?
         AND transaction_type='Expense'
@@ -725,24 +1010,37 @@ def get_expenses(username):
     return row[0]
 
 
+# ============================================================
+# GET ACCOUNT BALANCE
+# ============================================================
+
 def get_balance(username):
 
+    salary = get_salary(username)
+
+    income = get_income(username)
+
+    expenses = get_expenses(username)
+
     return (
-        get_salary(username)
-        + get_income(username)
-        - get_expenses(username)
+        salary
+        + income
+        - expenses
     )
 
 
 # ============================================================
-# EXPORT TO EXCEL
+# EXPORT TRANSACTIONS TO EXCEL
 # ============================================================
 
 @app.route("/export")
 def export_excel():
 
     if not logged_in():
-        return redirect(url_for("login"))
+
+        return redirect(
+            url_for("login")
+        )
 
     username = session["username"]
 
@@ -775,7 +1073,9 @@ def export_excel():
             "warning"
         )
 
-        return redirect(url_for("dashboard"))
+        return redirect(
+            url_for("dashboard")
+        )
 
     data = [
         dict(row)
@@ -817,6 +1117,7 @@ def export_excel():
 @app.route("/logout")
 def logout():
 
+    # Clear login session
     session.clear()
 
     flash(
@@ -824,16 +1125,35 @@ def logout():
         "success"
     )
 
-    return redirect(url_for("login"))
+    # Send user back to login page
+    return redirect(
+        url_for("login")
+    )
 
 
 # ============================================================
-# START
+# IMPORTANT FOR RENDER
+# ============================================================
+
+# This MUST be outside:
+#
+# if __name__ == "__main__":
+#
+# Render uses:
+#
+# gunicorn app:app
+#
+# so this ensures the database tables are created
+# when Render imports app.py.
+
+create_db()
+
+
+# ============================================================
+# RUN LOCALLY
 # ============================================================
 
 if __name__ == "__main__":
-
-    create_db()
 
     app.run(
         debug=True,
